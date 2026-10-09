@@ -1,0 +1,11 @@
+streamlit>=1.38
+openai>=1.50
+pydantic>=2.8
+chromadb>=0.5
+pypdf>=4.0
+python-docx>=1.1
+Jinja2>=3.1
+PyYAML>=6.0
+langchain-text-splitters>=0.2
+pytest>=8.0
+python-dotenv>=1.0

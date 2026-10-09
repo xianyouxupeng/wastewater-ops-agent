@@ -1,0 +1,9 @@
+.env
+vector_db/
+storage/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/knowledge/private/
+data/cases/cases_private.jsonl
+*.docx.tmp
