@@ -1,0 +1,483 @@
+# =====================================================================
+# 故障树（鉴别式决策树 schema）
+#
+# 每条故障包含：
+#   id                  唯一标识（snake_case）
+#   phenomenon          现象关键词列表，用于匹配用户输入
+#   conditions          触发条件，支持 all/any 复合组合
+#   hypotheses          可能原因假设，按先验概率(prior)从高到低排序，
+#                       每个 hypothesis 必须带 distinguishing_tests（鉴别检查），
+#                       用一项测量在相似原因之间做区分：
+#                         test          鉴别动作/观察项
+#                         if_confirmed  该项成立时的走向（锁定Hn / 佐证Hn / 转其他故障树）
+#                         if_not        该项不成立时的走向（可选）
+#   checklist           标准排查动作，按时间窗 window 分组（0-30min / 30-120min / 2-8h）
+#   temporary_actions   临时处置（仅建议，执行前必须人工确认）
+#   references          参考依据（国标/行标/厂内SOP编号）
+#
+# 维护约定：
+#   - 新增条目直接追加一段 YAML，保存即生效，无需改代码
+#   - 假设不超过 6 个；鉴别项必须可通过现场测量/观察在 30min 内完成
+#   - 禁止只写 {cause} 不写鉴别项的条目
+# =====================================================================
+
+# ---------------------------------------------------------------------
+# 1. 出水氨氮超标（硝化异常）
+# ---------------------------------------------------------------------
+- id: nh3n_exceed
+  phenomenon: ["出水氨氮超标", "氨氮去除率下降", "硝化效果差", "硝化异常"]
+  conditions:
+    all:
+      - {param: 出水氨氮, expr: "> 排放限值"}
+    any:
+      - {param: DO, expr: "< 2.5 mg/L"}
+      - {param: SV30, expr: "> 70%"}
+  hypotheses:
+    - id: H1
+      cause: 进水负荷冲击（氨氮/COD负荷骤升）
+      prior: 高
+      distinguishing_tests:
+        - {test: 进水氨氮/COD较日常均值升高50%以上, if_confirmed: 锁定H1}
+        - {test: 出水COD是否同步超标, if_confirmed: 锁定H1, if_not: 转H5}
+    - id: H2
+      cause: 曝气不足（DO长期低于硝化要求）
+      prior: 高
+      distinguishing_tests:
+        - {test: 好氧段DO < 1.0 mg/L持续2h以上, if_confirmed: 锁定H2}
+        - {test: 鼓风机电流、风压是否正常（排除设备原因）, if_not: "转 fault_tree: aeration_fault"}
+    - id: H3
+      cause: 碱度不足抑制硝化
+      prior: 中
+      distinguishing_tests:
+        - {test: 进水碱度 < 100 mg/L(CaCO3) 或出水pH < 6.5, if_confirmed: 锁定H3}
+    - id: H4
+      cause: SRT过短/污泥流失（硝化菌被洗出）
+      prior: 中
+      distinguishing_tests:
+        - {test: 近7天SRT核算低于设计值下限, if_confirmed: 锁定H4}
+        - {test: 二沉池出水携带污泥絮体, if_confirmed: 佐证H4}
+    - id: H5
+      cause: 毒性/抑制剂冲击
+      prior: 低
+      distinguishing_tests:
+        - {test: 镜检生物相受抑制（钟虫萎缩、活性差、原生动物减少）, if_confirmed: 锁定H5}
+        - {test: 上游有无异常排放（颜色/气味/在线COD骤升）, if_confirmed: 佐证H5}
+    - id: H6
+      cause: 低温抑制（冬季，水温 < 12℃）
+      prior: 低
+      distinguishing_tests:
+        - {test: 好氧段水温 < 12℃ 且为冬季渐进性下降（非骤变）, if_confirmed: 锁定H6}
+  checklist:
+    - {step: 核对在线氨氮/COD仪表最近校准时间（排除误报）, window: 0-30min}
+    - {step: 人工取样复测进水COD、出水氨氮、pH、碱度, window: 0-30min}
+    - {step: 检查鼓风机电流、风压、曝气头状态, window: 0-30min}
+    - {step: 核算F/M、SRT、氨氮负荷，与近7天趋势对比, window: 30-120min}
+    - {step: 镜检生物相，观察污泥性状, window: 2-8h}
+  temporary_actions:
+    - 逐步提高DO至2.5-3.5 mg/L（每次调0.5，观察30min）
+    - 暂停或减少剩余污泥排放20-50%（延长SRT）
+    - 碱度低于80 mg/L时补充碳酸氢钠（投加量须人工计算确认）
+  references: ["HJ 576-2010", "GB 18918-2002", "厂内SOP-A03"]
+
+# ---------------------------------------------------------------------
+# 2. 出水COD超标
+# ---------------------------------------------------------------------
+- id: cod_exceed
+  phenomenon: ["出水COD超标", "COD去除率下降", "出水有机物偏高"]
+  conditions:
+    all:
+      - {param: 出水COD, expr: "> 排放限值"}
+  hypotheses:
+    - id: H1
+      cause: 进水有机负荷冲击
+      prior: 高
+      distinguishing_tests:
+        - {test: 进水COD较日常均值升高50%以上, if_confirmed: 锁定H1}
+        - {test: 进水流量骤增（雨季/上游排水）, if_confirmed: 佐证H1}
+    - id: H2
+      cause: 污泥浓度不足/污泥流失
+      prior: 中
+      distinguishing_tests:
+        - {test: MLSS低于设计下限, if_confirmed: 锁定H2}
+        - {test: 二沉池出水携带絮体, if_confirmed: 佐证H2}
+    - id: H3
+      cause: 曝气不足（供氧跟不上负荷）
+      prior: 中
+      distinguishing_tests:
+        - {test: 好氧段DO < 1.5 mg/L, if_confirmed: 锁定H3}
+        - {test: 鼓风设备是否正常, if_not: "转 fault_tree: aeration_fault"}
+    - id: H4
+      cause: 毒性抑制（活性下降耗氧减少）
+      prior: 中
+      distinguishing_tests:
+        - {test: 曝气池DO不降反升（微生物耗氧减少的标志）, if_confirmed: 锁定H4}
+        - {test: 镜检生物相受抑制, if_confirmed: 锁定H4}
+    - id: H5
+      cause: 水温过低（冬季生化速率下降）
+      prior: 低
+      distinguishing_tests:
+        - {test: 水温 < 12℃ 且呈渐进性下降, if_confirmed: 锁定H5}
+  checklist:
+    - {step: 核对在线COD仪表校准记录，人工取样复测进/出水COD, window: 0-30min}
+    - {step: 记录进水流量、COD负荷，与近7天均值对比, window: 0-30min}
+    - {step: 测MLSS、SV30、DO、水温, window: 0-30min}
+    - {step: 核算F/M与SRT，检查排泥记录, window: 30-120min}
+    - {step: 镜检生物相评估活性, window: 2-8h}
+  temporary_actions:
+    - 提高DO至2.5-3.5 mg/L
+    - 减少排泥，提高MLSS至设计中上限
+    - （应急）人工确认后投加粉末活性炭或混凝剂
+  references: ["GB 18918-2002", "厂内SOP-A02"]
+
+# ---------------------------------------------------------------------
+# 3. 出水总氮（TN）超标（脱氮异常）
+# ---------------------------------------------------------------------
+- id: tn_exceed
+  phenomenon: ["出水总氮超标", "脱氮效率下降", "出水硝酸盐高", "总氮偏高"]
+  conditions:
+    all:
+      - {param: 出水TN, expr: "> 排放限值"}
+  hypotheses:
+    - id: H1
+      cause: 反硝化碳源不足
+      prior: 高
+      distinguishing_tests:
+        - {test: 进水BOD5/TN < 4（碳氮比不足）, if_confirmed: 锁定H1}
+        - {test: 缺氧段末端NO3-N仍 > 5 mg/L（反硝化不彻底）, if_confirmed: 佐证H1}
+    - id: H2
+      cause: 内回流比不足（NO3未带回缺氧段）
+      prior: 高
+      distinguishing_tests:
+        - {test: 内回流泵未开/开度不足/实际回流比低于设计值, if_confirmed: 锁定H2}
+    - id: H3
+      cause: 缺氧段DO过高（破坏缺氧环境）
+      prior: 中
+      distinguishing_tests:
+        - {test: 缺氧段DO > 0.5 mg/L, if_confirmed: 锁定H3}
+    - id: H4
+      cause: 硝化不良在前（SRT/碱度/DO问题，氨氮未转NO3）
+      prior: 中
+      distinguishing_tests:
+        - {test: 出水氨氮同步偏高而NO3不高, if_confirmed: "转 fault_tree: nh3n_exceed"}
+    - id: H5
+      cause: 反硝化停留时间不足
+      prior: 低
+      distinguishing_tests:
+        - {test: 缺氧段HRT < 设计值（流量超设计或池容被挤占）, if_confirmed: 锁定H5}
+  checklist:
+    - {step: 人工复测出水TN、NO3-N、氨氮，区分"硝化不良"还是"反硝化不良", window: 0-30min}
+    - {step: 检查内回流泵运行状态与实际回流比, window: 0-30min}
+    - {step: 测缺氧段沿程DO、NO3-N分布, window: 30-120min}
+    - {step: 核算进水BOD5/TN（碳氮比）, window: 30-120min}
+    - {step: 核对缺氧段HRT与流量记录, window: 2-8h}
+  temporary_actions:
+    - 内回流比提至设计值或以上（每次调10-20%，观察2h）
+    - 补充碳源（甲醇/乙酸钠/葡萄糖，投加量须人工计算确认）
+    - 降低缺氧段DO至0.2-0.5 mg/L
+  references: ["GB 18918-2002", "厂内SOP-A04"]
+
+# ---------------------------------------------------------------------
+# 4. 出水总磷（TP）超标（除磷异常）
+# ---------------------------------------------------------------------
+- id: tp_exceed
+  phenomenon: ["出水总磷超标", "除磷效果差", "总磷偏高"]
+  conditions:
+    all:
+      - {param: 出水TP, expr: "> 排放限值"}
+  hypotheses:
+    - id: H1
+      cause: 厌氧段环境破坏（DO/NO3干扰聚磷菌释磷）
+      prior: 高
+      distinguishing_tests:
+        - {test: 厌氧段DO > 0.2 mg/L 或 NO3-N > 0.5 mg/L, if_confirmed: 锁定H1}
+        - {test: 内回流/污泥回流携带过量NO3进入厌氧段, if_confirmed: 佐证H1}
+    - id: H2
+      cause: 化学除磷投药异常
+      prior: 高
+      distinguishing_tests:
+        - {test: 加药泵流量/压力异常、药桶液位下降速度异常, if_confirmed: 锁定H2}
+        - {test: 药剂过期/结晶/浓度配错, if_confirmed: 锁定H2}
+    - id: H3
+      cause: 碳源不足（进水BOD/TP低，聚磷菌底物不够）
+      prior: 中
+      distinguishing_tests:
+        - {test: 进水BOD5/TP < 20, if_confirmed: 锁定H3}
+        - {test: 厌氧段释磷量不足（PO4进出水差小）, if_confirmed: 佐证H3}
+    - id: H4
+      cause: 污泥在二沉池厌氧释磷回流（隐性磷释放）
+      prior: 中
+      distinguishing_tests:
+        - {test: 二沉池泥斗泥位过高/停留时间过长, if_confirmed: 锁定H4}
+        - {test: 回流污泥上清液PO4明显偏高, if_confirmed: 佐证H4}
+    - id: H5
+      cause: 排泥不及时（SRT过长，除磷污泥未排出系统）
+      prior: 低
+      distinguishing_tests:
+        - {test: SRT远超设计值且近期未加大排泥, if_confirmed: 锁定H5}
+  checklist:
+    - {step: 人工复测进出水TP、厌氧/缺氧/好氧段PO4沿程分布, window: 0-30min}
+    - {step: 检查化学除磷加药系统（泵/管路/药剂浓度）, window: 0-30min}
+    - {step: 测厌氧段DO、NO3-N，检查回流系统, window: 30-120min}
+    - {step: 核算进水BOD5/TP、SRT、排泥量, window: 30-120min}
+    - {step: 检查二沉池泥位与回流污泥上清液PO4, window: 2-8h}
+  temporary_actions:
+    - 修复/恢复化学除磷投药（按人工核算的量）
+    - 加大剩余污泥排放（缩短SRT至设计中值）
+    - 降低回流比、恢复厌氧段厌氧环境（关小曝气/消除回流NO3）
+  references: ["GB 18918-2002", "厂内SOP-A05"]
+
+# ---------------------------------------------------------------------
+# 5. 污泥膨胀（SV30/SVI 升高）
+# ---------------------------------------------------------------------
+- id: sludge_bulking
+  phenomenon: ["SV30升高", "污泥膨胀", "二沉池漂泥", "出水SS超标", "SVI升高"]
+  conditions:
+    any:
+      - {param: SV30, expr: "> 70%"}
+      - {param: SVI, expr: "> 200 mL/g"}
+  hypotheses:
+    - id: H1
+      cause: 丝状菌膨胀——低DO型
+      prior: 高
+      distinguishing_tests:
+        - {test: 镜检丝状菌丰度 ≥ +++（按镜检教程丰度分级）, if_confirmed: 佐证丝状菌膨胀}
+        - {test: 好氧段DO长期 < 1.0 mg/L, if_confirmed: 锁定H1}
+    - id: H2
+      cause: 丝状菌膨胀——低负荷型（F/M过低）
+      prior: 中
+      distinguishing_tests:
+        - {test: F/M < 0.1 kgBOD/(kgMLSS·d) 持续一周以上, if_confirmed: 锁定H2}
+    - id: H3
+      cause: 丝状菌膨胀——营养失衡型（N/P不足）
+      prior: 中
+      distinguishing_tests:
+        - {test: 进水BOD5:N:P偏离100:5:1（N或P明显偏低）, if_confirmed: 锁定H3}
+    - id: H4
+      cause: 非丝状菌膨胀（高黏性菌胶团/结合水）
+      prior: 中
+      distinguishing_tests:
+        - {test: 镜检丝状菌少但絮体松散、SV30高且上清液清, if_confirmed: 锁定H4}
+    - id: H5
+      cause: 二沉池反硝化上浮（易与膨胀混淆）
+      prior: 中
+      distinguishing_tests:
+        - {test: 漂泥块伴气泡、多发于夜间/低负荷时段, if_confirmed: "转 fault_tree: clarifier_float"}
+  checklist:
+    - {step: 镜检确认丝状菌类型与丰度, window: 0-30min}
+    - {step: 测MLSS、SVI、DO, window: 0-30min}
+    - {step: 核算F/M、进水BOD5:N:P营养比, window: 30-120min}
+    - {step: 近30天SRT/负荷趋势回溯，找诱因, window: 2-8h}
+  temporary_actions:
+    - 适当提高DO（针对低DO型）
+    - 控制进水负荷稳定（针对低负荷型）
+    - （临时应急）人工确认投加量后加氯/PAC抑制丝状菌——必须工艺工程师批准
+  references: ["厂内SOP-B01"]
+
+# ---------------------------------------------------------------------
+# 6. 生物泡沫
+# ---------------------------------------------------------------------
+- id: bio_foam
+  phenomenon: ["生物泡沫", "曝气池泡沫堆积", "泡沫粘稠", "褐色泡沫"]
+  conditions:
+    any:
+      - {param: 泡沫, expr: 持续堆积且粘稠稳定}
+  hypotheses:
+    - id: H1
+      cause: 放线菌/丝状菌型生物泡沫（诺卡氏菌类、微丝菌等）
+      prior: 高
+      distinguishing_tests:
+        - {test: 泡沫粘稠、褐色、堆积稳定不易破, if_confirmed: 佐证H1}
+        - {test: 镜检泡沫中放线菌/丝状菌丰富, if_confirmed: 锁定H1}
+        - {test: SRT偏长（>15-20天，利于放线菌富集）, if_confirmed: 佐证H1}
+    - id: H2
+      cause: 启动期/洗涤剂泡沫（表面活性剂）
+      prior: 中
+      distinguishing_tests:
+        - {test: 泡沫白色、松散、易破碎, if_confirmed: 锁定H2}
+        - {test: 进水检出表面活性剂或上游有洗涤废水排放, if_confirmed: 锁定H2}
+    - id: H3
+      cause: 污泥老化型泡沫
+      prior: 中
+      distinguishing_tests:
+        - {test: 镜检轮虫/寡毛虫大量、污泥色深灰, if_confirmed: "转 fault_tree: sludge_aging"}
+    - id: H4
+      cause: 过度曝气搅动（供气量过大）
+      prior: 低
+      distinguishing_tests:
+        - {test: DO > 4-5 mg/L 且供气量远超需要, if_confirmed: 锁定H4}
+  checklist:
+    - {step: 拍照记录泡沫颜色/形态/分布范围，便于趋势对比, window: 0-30min}
+    - {step: 镜检泡沫与混合液生物相, window: 0-30min}
+    - {step: 核对SRT与排泥记录, window: 30-120min}
+    - {step: 排查上游表面活性剂/油类排放, window: 2-8h}
+  temporary_actions:
+    - 表面喷淋水/人工确认后投加消泡剂
+    - 及时清除浮渣，防止随泡沫溢流
+    - 泡沫严重时适当降低SRT（增加排泥，须人工核算）
+  references: ["厂内SOP-B02"]
+
+# ---------------------------------------------------------------------
+# 7. 二沉池漂泥/翻泥/反硝化上浮
+# ---------------------------------------------------------------------
+- id: clarifier_float
+  phenomenon: ["二沉池漂泥", "出水带泥", "污泥块上浮", "翻泥", "出水SS超标", "反硝化上浮"]
+  conditions:
+    any:
+      - {param: 二沉池, expr: 出现漂泥/浮泥/出水携带絮体}
+  hypotheses:
+    - id: H1
+      cause: 反硝化上浮（泥斗内反硝化产气托起污泥）
+      prior: 高
+      distinguishing_tests:
+        - {test: 漂泥块伴明显气泡、多发于夜间/低负荷时段, if_confirmed: 锁定H1}
+        - {test: 上浮泥块搅碎后重新沉降且性状正常, if_confirmed: 佐证H1}
+    - id: H2
+      cause: 污泥膨胀导致的漂泥
+      prior: 高
+      distinguishing_tests:
+        - {test: SVI > 200 且镜检丝状菌 ≥ +++, if_confirmed: "转 fault_tree: sludge_bulking"}
+    - id: H3
+      cause: 水力冲击/短流（流量骤增、堰负荷不均）
+      prior: 中
+      distinguishing_tests:
+        - {test: 近期进水流量骤增（降雨/上游冲击）, if_confirmed: 锁定H3}
+        - {test: 出水堰单侧翻泥、池面流态异常, if_confirmed: 佐证H3}
+    - id: H4
+      cause: 刮吸泥机故障/池底积泥
+      prior: 中
+      distinguishing_tests:
+        - {test: 刮泥机异响/停转/超电流, if_confirmed: 锁定H4}
+        - {test: 排泥浓度异常降低或池底泥位异常升高, if_confirmed: 佐证H4}
+  checklist:
+    - {step: 观察漂泥形态（是否带气泡/时段规律）并拍照记录, window: 0-30min}
+    - {step: 测SV30、SVI、泥位，镜检生物相, window: 0-30min}
+    - {step: 检查刮吸泥机运行与排泥系统, window: 30-120min}
+    - {step: 核对进水流量曲线与二沉池水力负荷, window: 2-8h}
+  temporary_actions:
+    - 加大回流比，缩短污泥在泥斗停留时间（破坏反硝化条件）
+    - 夜间低负荷时段适当加大回流（针对反硝化上浮）
+    - 刮泥机故障时切换备用/报修，人工监控泥位
+  references: ["厂内SOP-B03"]
+
+# ---------------------------------------------------------------------
+# 8. 污泥老化/污泥解体
+# ---------------------------------------------------------------------
+- id: sludge_aging
+  phenomenon: ["污泥老化", "污泥解体", "出水细碎悬浮物", "上清液浑浊", "轮虫大量"]
+  conditions:
+    any:
+      - {param: SRT, expr: "> 设计值上限50%以上"}
+      - {param: F/M, expr: "< 0.08 kgBOD/(kgMLSS·d)"}
+  hypotheses:
+    - id: H1
+      cause: 污泥老化（SRT过长/负荷过低）
+      prior: 高
+      distinguishing_tests:
+        - {test: 镜检轮虫、寡毛虫大量出现，污泥色深灰、絮体密实, if_confirmed: 锁定H1}
+        - {test: SRT远超设计值且F/M偏低, if_confirmed: 佐证H1}
+    - id: H2
+      cause: 过度曝气剪切（絮体被打碎）
+      prior: 中
+      distinguishing_tests:
+        - {test: DO > 4-5 mg/L 且池面翻腾剧烈, if_confirmed: 锁定H2}
+    - id: H3
+      cause: 毒性/冲击导致污泥解体
+      prior: 中
+      distinguishing_tests:
+        - {test: 镜检生物相受抑制、絮体细碎分散、上清液浑浊, if_confirmed: 锁定H3, if_not: 排除H3}
+        - {test: 近期有异常进水记录, if_confirmed: 佐证H3}
+  checklist:
+    - {step: 测SV30、MLSS，观察上清液清澈度, window: 0-30min}
+    - {step: 镜检生物相（轮虫/寡毛虫数量、絮体形态）, window: 0-30min}
+    - {step: 核算SRT、F/M，回溯近30天排泥记录, window: 30-120min}
+    - {step: 排查异常进水与DO分布, window: 2-8h}
+  temporary_actions:
+    - 加大剩余污泥排放，将SRT回调至设计范围（每次调整幅度人工核算）
+    - 过度曝气时降低供气量至DO 2.0-3.5 mg/L
+    - 疑似毒性解体时按毒性冲击流程排查进水源头
+  references: ["厂内SOP-B04"]
+
+# ---------------------------------------------------------------------
+# 9. 曝气系统故障
+# ---------------------------------------------------------------------
+- id: aeration_fault
+  phenomenon: ["DO上不去", "曝气异常", "鼓风机异响", "风压异常", "曝气不均", "局部无气泡"]
+  conditions:
+    any:
+      - {param: DO, expr: "持续 < 1.0 mg/L 且提风量无效"}
+      - {param: 鼓风机, expr: 异响/振动/电流/风压异常}
+  hypotheses:
+    - id: H1
+      cause: 曝气头堵塞/膜片老化
+      prior: 高
+      distinguishing_tests:
+        - {test: 风压升高但DO不升（堵塞憋压的典型特征）, if_confirmed: 锁定H1}
+        - {test: 池面气泡分布不均：局部无气泡或冒大气泡（膜片破损）, if_confirmed: 锁定H1}
+    - id: H2
+      cause: 鼓风机自身故障
+      prior: 高
+      distinguishing_tests:
+        - {test: 风机异响/振动/超温/电流异常, if_confirmed: 锁定H2}
+        - {test: 风压、风量低于额定且随负荷无关, if_confirmed: 佐证H2}
+    - id: H3
+      cause: 管路阀门误操作/泄漏
+      prior: 中
+      distinguishing_tests:
+        - {test: 逐台核对阀门开度与管线压力，查找泄压点, if_confirmed: 锁定H3}
+    - id: H4
+      cause: 进水负荷升高导致需氧量增加（设备正常的相对不足）
+      prior: 中
+      distinguishing_tests:
+        - {test: 提大风量后DO能回升（设备本身正常）, if_confirmed: 锁定H4, if_not: "转 fault_tree: nh3n_exceed 或 cod_exceed 排查负荷"}
+  checklist:
+    - {step: 记录风机电流、风压、风量、温度，与额定值对比, window: 0-30min}
+    - {step: 巡池目检曝气均匀度，分区域记录, window: 0-30min}
+    - {step: 逐台核对曝气管路阀门开度, window: 30-120min}
+    - {step: 核对进水负荷变化，评估需氧量需求, window: 30-120min}
+  temporary_actions:
+    - 切换备用鼓风机
+    - 恢复被误关的阀门（双人核对）
+    - 曝气头清洗/更换需停池计划检修，提前人工确认方案
+  references: ["厂内SOP-E01", "设备手册-鼓风机"]
+
+# ---------------------------------------------------------------------
+# 10. 在线仪表漂移/失准（误报第一来源，放在处置链最前端核对）
+# ---------------------------------------------------------------------
+- id: instrument_drift
+  phenomenon: ["在线仪表数据异常", "仪表与化验对不上", "数据跳变", "仪表误报"]
+  conditions:
+    any:
+      - {param: 在线数据, expr: 与人工化验偏差 > 15% 或持续跳变}
+  hypotheses:
+    - id: H1
+      cause: 探头污染/漂移（最常见）
+      prior: 高
+      distinguishing_tests:
+        - {test: 人工取样化验与在线值偏差 > 15%, if_confirmed: 锁定H1}
+        - {test: 探头表面有生物膜/污泥/油污附着, if_confirmed: 锁定H1}
+    - id: H2
+      cause: 采样系统故障（采样管堵塞/位置不当）
+      prior: 中
+      distinguishing_tests:
+        - {test: 采样流量下降/采样管可见堵塞, if_confirmed: 锁定H2}
+        - {test: 采样点位与工艺控制点不匹配, if_confirmed: 锁定H2}
+    - id: H3
+      cause: 校准过期/校准失败
+      prior: 中
+      distinguishing_tests:
+        - {test: 核对校准记录，超出校准周期, if_confirmed: 锁定H3}
+    - id: H4
+      cause: 真实工艺波动（仪表没坏，工艺真变了）
+      prior: 中
+      distinguishing_tests:
+        - {test: 人工复测确认数据真实, if_confirmed: 按对应故障树处置（氨氮→nh3n_exceed 等）, if_not: 排除H4}
+  checklist:
+    - {step: 立即人工取样化验，与在线值比对, window: 0-30min}
+    - {step: 目检探头与采样系统状态, window: 0-30min}
+    - {step: 核对校准周期与校准记录, window: 30-120min}
+    - {step: 查看仪表历史趋势，判断是跳变还是漂移, window: 30-120min}
+  temporary_actions:
+    - 仪表数据存疑期间，以人工化验结果作为运行调整依据
+    - 清洗探头后观察数据回归情况
+    - 安排重新校准（按厂家规程，人工确认）
+  references: ["HJ 353-2019", "HJ 354-2019", "厂内SOP-I01"]

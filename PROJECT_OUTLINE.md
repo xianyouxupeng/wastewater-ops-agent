@@ -63,7 +63,7 @@
 ```
 
 核心设计原则：
-- **先规则后 RAG**：诊断先用故障树规则跑通，再叠加知识库检索增强
+- **先规则后 RAG**：诊断先用故障树规则跑通，再叠加知识库检索增强；故障树采用**鉴别式决策树 schema**（假设 + 鉴别检查，非平铺原因清单），故障树未覆盖的长尾故障由 LLM(+RAG) 兜底，输出必须强制明示低置信度
 - **可插拔模型**：LLM 和 Embedding 全走 OpenAI 兼容接口，`OPENAI_BASE_URL` + `OPENAI_API_KEY` 环境变量决定本地还是在线，代码零改动
 - **知识库热更新**：新增文档 = 丢文件 + 跑一次 ingest（或点界面按钮），不停服务、不全量重建
 - **手机优先适配**：界面布局按窄屏设计（大按钮、少分栏），手机是值班场景的主要终端
@@ -105,7 +105,7 @@ wastewater-ops-agent/
 │     └─ matcher.py           # 图谱图像检索（以图搜图，可选增强）
 ├─ data/
 │  ├─ rules/
-│  │  ├─ fault_tree.yaml      # 故障树（手动维护，先 10 条）
+│  │  ├─ fault_tree.yaml      # 故障树（鉴别式决策树 schema，P2 先 Top10，按清单框架增至 ~40 条）
 │  │  ├─ param_ranges.yaml    # 参数安全范围（手动维护）
 │  │  └─ indicator_species.yaml # 指示生物对照表（P9 镜检模块用）
 │  ├─ cases/
@@ -132,7 +132,7 @@ wastewater-ops-agent/
 
 | 知识类型 | 存放位置 | 维护方式 | 是否手动 |
 |---|---|---|---|
-| 故障树 | `data/rules/fault_tree.yaml` | 专家手写，20~50 条 | ✅ 手动（价值最高） |
+| 故障树 | `data/rules/fault_tree.yaml` | 专家手写，~40 条（P2 先 Top10 高频，按清单框架增量补齐） | ✅ 手动（价值最高） |
 | 参数范围 | `data/rules/param_ranges.yaml` | 专家手写，10~30 条 | ✅ 手动 |
 | 历史案例 | `data/cases/cases.jsonl` | 表格整理后批量导出 | 半自动 |
 | 文档资料 | `data/knowledge/**` | 批量放文件 → 跑 `scripts/ingest.py` | ❌ 批量 |
@@ -160,6 +160,8 @@ python scripts/ingest.py
 ```
 用户输入现象+水质
   → 规则引擎匹配 fault_tree.yaml（可多条命中）
+  → 未命中任何条目 → LLM(+P4后RAG) 兜底推理，输出顶部强制明示低置信度
+  → 命中：按 hypotheses 鉴别检查逐个排除，锁定可能原因
   → 检索 cases.jsonl 相似案例
   → 检索向量库相关 SOP/手册段落
   → LLM 汇总，输出结构化结果：
@@ -228,7 +230,7 @@ python scripts/ingest.py
 | 阶段 | 内容 | 完成标志 |
 |---|---|---|
 | P1 骨架 | git init、目录、.gitignore、requirements、README 框架 | 仓库可克隆 |
-| P2 诊断 MVP | fault_tree.yaml（10 条）+ 诊断 prompt + CLI 可跑 | 命令行输入现象→输出排查清单 |
+| P2 诊断 MVP | fault_tree.yaml（Top10 高频条目，鉴别式 schema + 未命中兜底）+ 诊断 prompt + CLI 可跑 | 命中故障树 → 输出排查清单；未命中 → 输出低置信度声明，不硬编 |
 | P3 双模型 | config.py + llm.py，接通本地 Ollama 和在线 API，验证可切换 | 同一问题两种模型都能回答 |
 | P4 知识库 | ingest.py（增量）+ retriever.py + 3~5 份脱敏样例文档 | 提问能带引用回答；添加新文档重跑只处理新文件 |
 | P5 案例增强 | cases.jsonl 检索接入诊断流程 | 诊断结果引用相似案例 |
@@ -252,5 +254,5 @@ python scripts/ingest.py
 ## 9. 评估（先攒用例，再谈指标）
 
 - 建立 `data/samples/eval_cases.yaml`：20~30 条带标准答案的测试用例
-- 诊断：Top3 原因命中率；问答：引用正确率、拒答准确率；台账：字段完整率
+- 诊断：Top3 原因命中率、未命中时低置信度声明覆盖率（红线）；问答：引用正确率、拒答准确率；台账：字段完整率
 - 红线指标：自动执行类操作输出次数 = **0**（测试断言）
