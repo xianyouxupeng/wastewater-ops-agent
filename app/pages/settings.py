@@ -9,10 +9,16 @@ from app.providers import PROVIDER_REGISTRY, STORE_PATH
 
 def render():
     st.title("⚙️ 设置")
-    tab_llm, tab_about = st.tabs(["🤖 模型", "ℹ️ 关于"])
+    tab_llm, tab_vlm, tab_about = st.tabs(["🤖 模型", "👁️ 视觉模型", "ℹ️ 关于"])
 
     with tab_llm:
         _render_llm()
+    with tab_vlm:
+        try:
+            from app.vision.settings_ui import render_vlm_settings
+            render_vlm_settings()
+        except ImportError:  # app/vision/ 模块被移除时降级
+            st.caption("镜检诊断模块未安装（app/vision/ 不存在）")
     with tab_about:
         st.markdown(
             "### 污水处理运维助手\n"

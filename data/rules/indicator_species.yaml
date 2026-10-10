@@ -1,0 +1,36 @@
+# 指示生物对照表（P9 镜检诊断）
+# 匹配规则：VLM 描述文本与 organism 全角"（"前的基础名做子串匹配，
+#           "大量/优势"等程度词不参与命中判定，只透传给解读 prompt。
+# fault_tree_ref 指向 fault_tree.yaml 的 id，命中时界面提示"建议转入XX排查流程"。
+# 增补条目 = 追加一段 YAML，保存即生效（无需重启）。
+- organism: 钟虫
+  meaning: 污泥成熟、运行良好，原生动物优势期的标志
+  action: 维持现状，继续观察
+- organism: 累枝虫
+  meaning: 污泥成熟，负荷适中偏低的标志
+  action: 维持现状
+- organism: 轮虫
+  meaning: 污泥老化、负荷偏低（大量出现时）
+  action: 适当增加排泥，缩短泥龄
+- organism: 丝状菌
+  meaning: 少量有利于污泥架桥；丰度+++以上提示污泥膨胀倾向（低DO/低负荷/氮磷失衡）
+  action: 核查DO、污泥负荷与营养比，必要时按污泥膨胀排查流程处置
+  fault_tree_ref: sludge_bulking
+- organism: 游离细菌
+  meaning: 大量分散游离菌提示高负荷、污泥年轻
+  action: 核实污泥负荷与泥龄
+- organism: 变形虫
+  meaning: 污泥不成熟或受冲击后的恢复期
+  action: 稳定进水，避免冲击负荷，持续观察
+- organism: 吸管虫
+  meaning: 运行后期出现，污泥成熟度较高的标志
+  action: 维持现状
+- organism: 线虫
+  meaning: 泥龄过长、污泥老化的标志
+  action: 适当增加排泥
+- organism: 草履虫
+  meaning: 活性污泥培养中期常见，处理效果一般
+  action: 关注出水指标变化
+- organism: 豆形虫
+  meaning: 高负荷、溶解氧偏低时多见
+  action: 核查DO与污泥负荷
