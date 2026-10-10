@@ -7,7 +7,7 @@ import streamlit as st
 from app.rag.parsers import SUPPORTED_SUFFIXES
 from app.rag.ingest import store_key, ingest_knowledge
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]  # 项目根（本文件在 app/pages/ 下，取两级）
 KNOWLEDGE_DIR = ROOT / "data" / "knowledge"
 
 SUBDIRS = ["sop", "regulations", "equipment", "chemicals",
