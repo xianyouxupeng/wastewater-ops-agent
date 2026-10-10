@@ -29,8 +29,11 @@ def match_trees(user_input: str, trees: list[dict]) -> list[dict]:
     return [tree for _, tree in scored]
 
 
-def build_messages(user_input: str, matched: list[dict]) -> list[dict]:
-    """按命中与否组装 prompt：命中拼树，未命中走兜底 prompt + 知识库检索增强"""
+def build_messages(user_input: str, matched: list[dict],
+                   cases: list[dict] | None = None) -> list[dict]:
+    """按命中与否组装 prompt：命中拼树，未命中走兜底 prompt + 知识库检索增强；
+    两种路径都拼入相似历史案例（若有）"""
+    case_block = _case_block(cases)
     if matched:
         tree_text = yaml.dump(matched, allow_unicode=True, sort_keys=False)
         content = f"【命中的故障树条目】\n{tree_text}\n\n【用户描述】\n{user_input}"
@@ -41,6 +44,8 @@ def build_messages(user_input: str, matched: list[dict]) -> list[dict]:
         context = _kb_context(user_input)
         content = user_input if not context else f"{user_input}\n\n{context}"
         system = FALLBACK_SYSTEM
+    if case_block:
+        content = f"{content}\n\n{case_block}"
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": content},
@@ -48,22 +53,46 @@ def build_messages(user_input: str, matched: list[dict]) -> list[dict]:
 
 
 def _kb_context(user_input: str, k: int = 3) -> str:
-    """从知识库检索相关片段拼为参考资料段；任何异常静默返回空"""
+    """从知识库检索相关片段拼为参考资料段；检索失败静默返回空（不阻塞主流程）"""
     try:
         from app.rag.retriever import retrieve
         hits = retrieve(user_input, k=k)
         if not hits:
             return ""
         refs = "\n\n".join(f"[来源: {h['source']}]\n{h['text']}" for h in hits)
-        return f"【知识库参考资料（供参考，注意甄别适用性）】\n{refs}"
+        return f"【知识库参考资料（要求引用来源文件名；供参考，注意甄别适用性）】\n{refs}"
     except Exception:
         return ""
+
+
+def _case_block(cases: list[dict] | None) -> str:
+    """相似历史案例段（拼入 prompt）。None/空列表都返回空串"""
+    if not cases:
+        return ""
+    from app.rag.cases import format_case
+    listing = "\n".join(f"- {format_case(c['case'])}" for c in cases)
+    return f"【相似历史案例（本厂处置实录，注意甄别与当前工况的相似度）】\n{listing}"
+
+
+def _similar_cases(user_input: str, k: int = 3) -> list[dict]:
+    """检索相似历史案例；检索失败静默返回空（不阻塞主流程）"""
+    try:
+        from app.rag.cases import retrieve_cases
+        return retrieve_cases(user_input, k=k)
+    except Exception:
+        return []
 
 
 def diagnose(user_input: str, *, chat_fn=chat) -> str:
     """诊断主入口。chat_fn 可注入替换（测试不依赖LLM、界面可按需切换模型）"""
     matched = match_trees(user_input, load_fault_trees())
-    answer = chat_fn(build_messages(user_input, matched))
+    cases = _similar_cases(user_input)
+    answer = chat_fn(build_messages(user_input, matched, cases))
+    output = answer
     if not matched:
-        return f"{FALLBACK_WARNING}\n\n{answer}"
-    return answer
+        output = f"{FALLBACK_WARNING}\n\n{output}"
+    if cases:
+        from app.rag.cases import format_case
+        listing = "\n".join(f"- {format_case(c['case'])}" for c in cases)
+        output = f"{output}\n\n---\n\n## 相似历史案例\n{listing}"
+    return output

@@ -77,6 +77,18 @@ def main():
     for name in stats["removed"]:
         print(f"  - {name}")
 
+    from app.rag.cases import ingest_cases
+    case_stats = ingest_cases()
+    if case_stats["changed"] or case_stats["removed"]:
+        print(f"案例库：新增/更新 {len(case_stats['changed'])} 条，"
+              f"清理 {len(case_stats['removed'])} 条")
+        for cid in case_stats["changed"]:
+            print(f"  + 案例 {cid}")
+
+
+if __name__ == "__main__":
+    main()
+
 
 if __name__ == "__main__":
     main()
