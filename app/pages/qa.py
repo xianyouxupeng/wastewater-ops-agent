@@ -8,9 +8,13 @@ MAX_HISTORY = 50  # 界面保留的最近消息条数
 
 
 def _write_sources(sources: list):
-    """展示回答引用编号 [n] 对应的实际来源文件"""
-    st.caption("📎 本次引用编号对应的来源：" + "；".join(
-        f"[{i + 1}] {s}" for i, s in enumerate(sources)))
+    """展示回答引用编号 [n] 对应的实际来源文件，同文件多片段合并显示"""
+    grouped: dict[str, list[int]] = {}
+    for i, s in enumerate(sources, 1):
+        grouped.setdefault(s, []).append(i)
+    parts = ["[" + "][".join(str(n) for n in nums) + f"] {s}"
+             for s, nums in grouped.items()]
+    st.caption("📎 本次引用编号对应的来源：" + "；".join(parts))
 
 
 def render():
