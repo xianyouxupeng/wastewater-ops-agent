@@ -19,12 +19,18 @@ def build_messages(question: str, hits: list[dict]) -> list[dict]:
     ]
 
 
-def ask(question: str, k: int = 5, chat_fn=None) -> str:
-    """知识问答主入口。chat_fn 可注入替换（测试/界面切换模型）"""
+def ask(question: str, k: int = 5, chat_fn=None,
+        return_sources: bool = False) -> str | tuple[str, list[dict]]:
+    """知识问答主入口。chat_fn 可注入替换（测试/界面切换模型）。
+
+    return_sources=True 时返回 (回答, 检索片段列表)，界面据此展示 [n] 对应的来源文件。
+    """
     hits = retrieve(question, k=k)
     if not hits:
-        return NO_RESULT_REPLY
-    if chat_fn is None:
-        from app.agent.llm import chat
-        chat_fn = chat
-    return chat_fn(build_messages(question, hits))
+        answer = NO_RESULT_REPLY
+    else:
+        if chat_fn is None:
+            from app.agent.llm import chat
+            chat_fn = chat
+        answer = chat_fn(build_messages(question, hits))
+    return (answer, hits) if return_sources else answer
