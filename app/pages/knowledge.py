@@ -1,14 +1,16 @@
-"""📁 知识库页：文档清单（位置/大小/时间）+ 入库统计 + 使用说明"""
+"""📁 知识库页：文档清单（位置/大小/时间）+ 上传入库 + 使用说明"""
 import time
 from pathlib import Path
 
 import streamlit as st
 
 from app.rag.parsers import SUPPORTED_SUFFIXES
-from app.rag.ingest import store_key
+from app.rag.ingest import store_key, ingest_knowledge
 
 ROOT = Path(__file__).resolve().parents[1]
 KNOWLEDGE_DIR = ROOT / "data" / "knowledge"
+
+SUBDIRS = ["sop", "regulations", "equipment", "chemicals", "uploads"]
 
 
 def _human_size(n: int) -> str:
@@ -39,6 +41,47 @@ def _chunk_count() -> int | None:
         return None
 
 
+@st.dialog("⬆️ 上传文档", width="large")
+def upload_dialog():
+    """拖入文件 → 选目标子目录 → 保存并自动切割/嵌入/入库"""
+    st.caption("把文档拖进下面框里（md / txt / pdf / docx，可多选），"
+               "选好存放目录后自动切割、嵌入并入库")
+    uploads = st.file_uploader("拖入文件", accept_multiple_files=True,
+                               type=["md", "txt", "pdf", "docx"],
+                               label_visibility="collapsed")
+    subdir = st.selectbox("存放目录（data/knowledge/ 下）", SUBDIRS,
+                          help="sop 规程 / regulations 法规 / equipment 设备 / "
+                               "chemicals 药剂 / uploads 其他")
+
+    if st.button("确认上传并入库", type="primary", use_container_width=True,
+                 disabled=not uploads):
+        target = KNOWLEDGE_DIR / subdir
+        target.mkdir(parents=True, exist_ok=True)
+        overwritten = []
+        for f in uploads:
+            dest = target / f.name
+            if dest.exists():
+                overwritten.append(f.name)
+            dest.write_bytes(f.getvalue())
+        try:
+            with st.spinner("切割 + 嵌入 + 入库..."):
+                stats = ingest_knowledge(KNOWLEDGE_DIR,
+                                         ROOT / "vector_db" / "manifest.json")
+        except Exception as e:  # 常见：embedding 端点未启动
+            st.error(f"入库失败：{e}（请检查 embedding 服务，默认本地 Ollama bge-m3）")
+            return
+        new_files = [Path(n).name for n in stats["changed"]]
+        st.success(f"入库完成：本次处理 {len(stats['changed'])} 个文件，"
+                   f"切出 {stats['chunks']} 个片段"
+                   + (f"；覆盖已存在：{'、'.join(overwritten)}"
+                      if overwritten else ""))
+        for name in new_files:
+            st.caption(f"+ {name}")
+        st.caption("点下方“关闭”刷新列表")
+        if st.button("关闭", use_container_width=True):
+            st.rerun()
+
+
 def render():
     st.subheader("📁 知识库")
 
@@ -58,7 +101,10 @@ def render():
 
     head_l, head_r = st.columns([3, 1])
     head_l.markdown("**已上传文档**")
-    if head_r.button("🔄 刷新列表", use_container_width=True):
+    if head_r.button("⬆️ 上传文档", type="primary", use_container_width=True):
+        upload_dialog()
+
+    if st.button("🔄 刷新列表", use_container_width=True):
         st.rerun()
 
     if not files:
