@@ -63,12 +63,12 @@ def kb_dialog():
 
 
 nav = st.navigation([
-    st.Page(diagnose.render, title="故障诊断", icon="🔧", default=True),
-    st.Page(qa.render, title="知识问答", icon="📚"),
-    st.Page(knowledge.render, title="知识库", icon="📁"),
-    st.Page(ledger.render, title="台账生成", icon="📋"),
-    st.Page(params.render, title="参数建议", icon="⚙️"),
-    st.Page(settings.render, title="设置", icon="🛠️"),
+    st.Page(diagnose.render, title="故障诊断", icon="🔧", url_path="diagnose", default=True),
+    st.Page(qa.render, title="知识问答", icon="📚", url_path="qa"),
+    st.Page(knowledge.render, title="知识库", icon="📁", url_path="knowledge"),
+    st.Page(ledger.render, title="台账生成", icon="📋", url_path="ledger"),
+    st.Page(params.render, title="参数建议", icon="⚙️", url_path="params"),
+    st.Page(settings.render, title="设置", icon="🛠️", url_path="settings"),
 ])
 
 with st.sidebar:
