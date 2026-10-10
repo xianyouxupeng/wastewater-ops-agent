@@ -7,3 +7,6 @@ __pycache__/
 data/knowledge/private/
 data/cases/cases_private.jsonl
 *.docx.tmp
+
+data/models.json
+data/knowledge/uploads/
