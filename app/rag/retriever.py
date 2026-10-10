@@ -21,5 +21,7 @@ def retrieve(query: str, k: int = 5) -> list[dict]:
                                result["distances"][0]):
         if dist > MAX_DISTANCE:
             break  # 结果按距离升序，后面只会更差
+        if not doc or not meta or "source" not in meta:
+            continue  # 跳过删除残留条目（chroma 删除后压实前偶发返回 None 字段）
         hits.append({"text": doc, "source": meta["source"], "distance": dist})
     return hits

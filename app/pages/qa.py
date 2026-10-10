@@ -32,6 +32,8 @@ def render():
                 answer = ask(question, chat_fn=chat_fn)
         except Exception as e:
             answer = f"⚠️ 问答失败：{e}"
+            with st.expander("🔧 错误详情（排查用）"):
+                st.exception(e)
         st.chat_message("assistant").markdown(answer)
         st.session_state["qa_history"].append({"role": "assistant", "content": answer})
         # 只保留最近 N 条，防止 session 膨胀
