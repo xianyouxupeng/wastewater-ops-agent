@@ -15,7 +15,9 @@ from app.agent.llm import get_chat_fn
 from app.diagnostic.engine import diagnose, FALLBACK_WARNING
 from app.rag.qa import ask
 from app.rag.ingest import ingest_knowledge
-from app.rag.cases import ingest_cases, format_case
+from app.rag.cases import ingest_cases
+from app.params.advisor import suggest
+from app.ledger.report_generator import generate_report
 
 st.set_page_config(page_title="污水处理运维助手", page_icon="💧", layout="centered")
 
@@ -95,7 +97,60 @@ with tab_qa:
             st.error(f"问答失败：{e}")
 
 with tab_ledger:
-    st.info("📋 台账生成将在 P7 实现：表单录入当日数据 → 导出 Word 台账。")
+    st.subheader("台账生成")
+    with st.form("ledger_form"):
+        st.text_input("厂名", key="ledger_plant_name", placeholder="例：XX污水处理厂")
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            ledger_date = st.date_input("日期", format="YYYY-MM-DD")
+        with c2:
+            ledger_shift = st.selectbox("班次", ["白班", "中班", "夜班"])
+        st.text_input("记录人", key="ledger_op")
+
+        st.markdown("**进出水水质（mg/L，可留空）**")
+        for key, label in [("inlet_cod", "进水COD"), ("outlet_cod", "出水COD"),
+                           ("inlet_nh3n", "进水氨氮"), ("outlet_nh3n", "出水氨氮"),
+                           ("outlet_tn", "出水TN"), ("outlet_tp", "出水TP"),
+                           ("outlet_ss", "出水SS"), ("inlet_ph", "进水pH"),
+                           ("outlet_ph", "出水pH")]:
+            st.text_input(label, key=f"ledger_{key}")
+
+        st.markdown("**生化运行参数**")
+        for key, label in [("flow", "处理水量（m³/d）"), ("temp", "水温（℃）"),
+                           ("do", "DO（mg/L）"), ("mlss", "MLSS（mg/L）"),
+                           ("sv30", "SV30（%）"), ("svi", "SVI"),
+                           ("pac", "PAC药耗（kg）"), ("power", "电耗（kWh）")]:
+            st.text_input(label, key=f"ledger_{key}")
+
+        st.text_area("运行小结", key="ledger_summary",
+                     placeholder="例：系统运行稳定，各指标达标")
+        st.text_area("异常情况与处置", key="ledger_abnormal",
+                     placeholder="例：下午进水COD短暂升高，已减泥提DO，2h后恢复")
+
+        submitted = st.form_submit_button("📝 生成台账", use_container_width=True)
+
+    if submitted:
+        data = {k.removeprefix("ledger_"): str(v)
+                for k, v in st.session_state.items()
+                if k.startswith("ledger_") and k != "ledger_op" and v is not None}
+        data["operator"] = st.session_state.get("ledger_op", "")
+        data["date"] = ledger_date.isoformat()
+        data["shift"] = ledger_shift
+        docx_bytes = generate_report(data)
+        st.download_button("⬇️ 下载 Word 台账", docx_bytes,
+                           file_name=f"运行台账_{ledger_date}.docx",
+                           mime="application/vnd.openxmlformats-officedocument"
+                                ".wordprocessingml.document",
+                           use_container_width=True)
 
 with tab_params:
-    st.info("⚙️ 参数建议将在 P7 实现：输入当前参数 → 生成带风险提示的调整建议卡。")
+    st.subheader("参数辅助建议")
+    st.caption("输入当前参数或现象（带数值或“偏高/偏低”），逐条生成建议卡。"
+               "示例：DO 1.5，氨氮偏高")
+    param_text = st.text_area("当前参数/现象", key="param_text", height=80)
+    if st.button("💡 生成建议卡", type="primary", use_container_width=True):
+        if not param_text.strip():
+            st.warning("请先输入参数或现象")
+        else:
+            with st.expander("📋 建议卡（点击展开/收起）", expanded=True):
+                st.markdown(suggest(param_text))

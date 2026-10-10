@@ -1,0 +1,169 @@
+# 参数辅助建议规则库：每条 = 参数 / 触发条件 / 目标范围 / 调整动作 / 风险 / 观察指标 / 复测时间
+# 新增条目 = 追加一段 YAML，保存即生效，不改代码。
+# direction: 输入只写"偏高/偏低"等方向词时的匹配方向；condition: 输入给出数值时的判断式
+- id: do_low
+  param: DO
+  direction: low
+  condition: "< 2.0"
+  title: DO 偏低（硝化受抑制风险）
+  target: 生化池末端 DO 2.0~3.5 mg/L
+  actions:
+    - 提高鼓风机风量/增大曝气量，每次微调后观察30min再动
+    - 检查鼓风机电流风压、曝气头是否堵塞破损
+  risks:
+    - 提气过猛会打碎污泥絮体，出水SS升高
+    - 电耗上升
+  watch:
+    - 末端DO与沿程DO分布
+    - 絮体状态、出水SS
+  recheck: 调整后 30min 复测 DO
+
+- id: do_high
+  param: DO
+  direction: high
+  condition: "> 4.5"
+  title: DO 偏高（污泥老化/能耗浪费风险）
+  target: 生化池末端 DO 2.0~3.5 mg/L
+  actions:
+    - 适当降低鼓风机风量，分次下调并观察
+  risks:
+    - 长期高DO加速污泥老化、打碎絮体
+    - 电耗浪费
+  watch:
+    - SV30、镜检生物相（后生动物增多示老化）
+  recheck: 调整后 1~2h 复测
+
+- id: sv30_high
+  param: SV30
+  direction: high
+  condition: "> 70"
+  title: SV30 偏高（污泥膨胀倾向）
+  target: SV30 < 70%（SVI 参考范围 70~150 mL/g）
+  actions:
+    - 镜检确认丝状菌丰度，区分丝状/非丝状膨胀
+    - 排查低DO、低负荷、氮磷失衡等诱因并对应调整
+    - （应急）加氯/PAC 抑制丝状菌——投加量必须人工计算并经工艺工程师批准
+  risks:
+    - 应急投药会杀伤微生物，过量导致系统崩溃
+  watch:
+    - 镜检生物相、SVI、DO、N/P营养比
+  recheck: 每班测 SV30，调整后逐日跟踪
+
+- id: mlss_high
+  param: MLSS
+  direction: high
+  condition: "> 4500"
+  title: MLSS 偏高（污泥老化倾向）
+  target: MLSS 按本厂设计控制（常用 3000~4500 mg/L）
+  actions:
+    - 增加剩余污泥排放量，按目标 SRT 分次调整
+  risks:
+    - 排泥过快会冲击硝化效果，出水氨氮波动
+  watch:
+    - SV30/SVI、出水氨氮、SRT核算
+  recheck: 每日测 MLSS
+
+- id: mlss_low
+  param: MLSS
+  direction: low
+  condition: "< 2500"
+  title: MLSS 偏低（污泥量不足/流失）
+  target: MLSS 按本厂设计控制（常用 3000~4500 mg/L）
+  actions:
+    - 减少剩余污泥排放
+    - 排查污泥流失：二沉池漂泥、出水SS偏高
+  risks:
+    - 污泥流失未查明原因时单纯减泥治标不治本
+  watch:
+    - MLSS、出水SS、二沉池水面
+  recheck: 每日测 MLSS
+
+- id: nh3n_high
+  param: 氨氮
+  direction: high
+  title: 氨氮偏高（硝化不足）
+  target: 出水氨氮低于本厂排放限值（按排污许可证执行）
+  actions:
+    - 提高DO至 2.5~3.5 mg/L（每次调0.5，观察30min）
+    - 核查碱度：进水碱度<100 mg/L(CaCO3) 或 pH<6.5 时补碱（投加量人工计算）
+    - 核算 SRT 与氨氮负荷，排查进水负荷冲击/毒性
+  risks:
+    - 加碱过量引起 pH 冲击，同样抑制硝化
+  watch:
+    - DO、pH/碱度、进水氨氮负荷、镜检生物相
+  recheck: 调整后 2~4h 复测出水氨氮
+
+- id: cod_high
+  param: 出水COD
+  direction: high
+  title: 出水COD偏高
+  target: 出水COD低于本厂排放限值
+  actions:
+    - 核查进水COD负荷是否冲击，必要时限流/回流调节
+    - 提高供氧，检查曝气均匀度
+    - 检查二沉池出水是否携带SS（SS携带COD）
+  risks:
+    - 盲目加大曝气掩盖真实原因（毒性/仪表漂移）
+  watch:
+    - 进出水COD、DO、SV30、出水SS
+  recheck: 调整后 2~4h 复测
+
+- id: tn_high
+  param: TN
+  direction: high
+  title: TN 偏高（反硝化不足）
+  target: 出水TN低于本厂排放限值
+  actions:
+    - 核查碳源：进水BOD/TN比值不足时补加碳源（投加量必须人工计算确认）
+    - 适当提高内回流比
+    - 控制缺氧段 DO < 0.5 mg/L
+  risks:
+    - 碳源过量会导致出水COD超标
+  watch:
+    - 缺氧段DO、内回流流量、出水COD/氨氮
+  recheck: 调整后 4h 复测
+
+- id: tp_high
+  param: TP
+  direction: high
+  title: TP 偏高（除磷异常）
+  target: 出水TP低于本厂排放限值
+  actions:
+    - 核查化学除磷PAC投加量与泵运行状态（投加量人工计算确认）
+    - 排查厌氧段DO过高或NO3回流的干扰
+    - 适当加大排泥（生物除磷靠排泥带出）
+  risks:
+    - PAC过量影响pH与污泥活性
+  watch:
+    - 厌氧段DO、出水SS（SS含磷）、PAC泵状态
+  recheck: 调整后 4h 复测
+
+- id: ph_low
+  param: pH
+  direction: low
+  condition: "< 6.5"
+  title: pH 偏低（硝化抑制风险）
+  target: 生化池 pH 6.5~8.5
+  actions:
+    - 补充碳酸氢钠等碱源（投加量必须人工计算确认）
+    - 排查上游酸性/碱性异常排放
+  risks:
+    - pH骤变抑制生化系统，调整须平缓
+  watch:
+    - 进出水pH、碱度、镜检生物相
+  recheck: 调整后 1h 复测 pH
+
+- id: inlet_cod_high
+  param: 进水COD
+  direction: high
+  title: 进水COD升高（负荷冲击）
+  target: 进水负荷波动控制在日常均值 ±30% 以内
+  actions:
+    - 联系上游排查异常排放（颜色/气味/在线数据）
+    - 利用调节池削峰，必要时限流
+    - 提前提高DO、暂停排泥，为冲击预留余量
+  risks:
+    - 冲击过猛时任何调整都滞后，重点是提前预警
+  watch:
+    - 在线COD趋势、进出水氨氮/COD、出水指标
+  recheck: 每 1~2h 跟踪在线数据

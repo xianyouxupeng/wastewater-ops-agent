@@ -1,0 +1,31 @@
+# {{ plant_name }} 运行台账
+
+**日期**：{{ date }}　**班次**：{{ shift }}　**记录人**：{{ operator or "—" }}
+
+## 进出水水质（mg/L）
+
+| 指标 | 进水 | 出水 |
+| --- | --- | --- |
+| COD | {{ inlet_cod or "—" }} | {{ outlet_cod or "—" }} |
+| 氨氮 | {{ inlet_nh3n or "—" }} | {{ outlet_nh3n or "—" }} |
+| TN | — | {{ outlet_tn or "—" }} |
+| TP | — | {{ outlet_tp or "—" }} |
+| SS | — | {{ outlet_ss or "—" }} |
+| pH | {{ inlet_ph or "—" }} | {{ outlet_ph or "—" }} |
+
+## 生化运行参数
+
+| 参数 | 数值 | 参数 | 数值 |
+| --- | --- | --- | --- |
+| 处理水量（m³/d） | {{ flow or "—" }} | 水温（℃） | {{ temp or "—" }} |
+| DO（mg/L） | {{ do or "—" }} | MLSS（mg/L） | {{ mlss or "—" }} |
+| SV30（%） | {{ sv30 or "—" }} | SVI | {{ svi or "—" }} |
+| PAC药耗（kg） | {{ pac or "—" }} | 电耗（kWh） | {{ power or "—" }} |
+
+## 运行小结
+
+{{ summary or "—" }}
+
+## 异常情况与处置
+
+{{ abnormal or "无" }}
