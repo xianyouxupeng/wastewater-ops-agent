@@ -4,10 +4,12 @@ storage/
 __pycache__/
 *.pyc
 .pytest_cache/
-data/knowledge/private/
+data/knowledge/private/*
+!data/knowledge/private/.gitkeep
 data/cases/cases_private.jsonl
 *.docx.tmp
 
 data/models.json
-data/knowledge/uploads/
+data/knowledge/uploads/*
+!data/knowledge/uploads/.gitkeep
 data/atlas/
