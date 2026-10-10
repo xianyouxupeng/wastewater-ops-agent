@@ -10,7 +10,8 @@ from app.rag.ingest import store_key, ingest_knowledge
 ROOT = Path(__file__).resolve().parents[1]
 KNOWLEDGE_DIR = ROOT / "data" / "knowledge"
 
-SUBDIRS = ["sop", "regulations", "equipment", "chemicals", "uploads"]
+SUBDIRS = ["sop", "regulations", "equipment", "chemicals",
+           "microscopy", "private", "uploads"]
 
 
 def _human_size(n: int) -> str:
@@ -82,6 +83,31 @@ def upload_dialog():
             st.rerun()
 
 
+@st.dialog("🗑️ 删除文档")
+def delete_dialog(p: Path):
+    """确认后删除文件，并立即清理其在向量库中的片段"""
+    st.warning(f"确定永久删除 **{p.name}** ？文件与其向量片段将一并清除，不可恢复。")
+    c1, c2 = st.columns(2)
+    if c1.button("取消", use_container_width=True):
+        st.rerun()
+    if c2.button("确认删除", type="primary", use_container_width=True):
+        try:
+            p.unlink()
+        except Exception as e:
+            st.error(f"删除文件失败：{e}")
+            return
+        try:
+            stats = ingest_knowledge(KNOWLEDGE_DIR,
+                                     ROOT / "vector_db" / "manifest.json")
+            n = len(stats["removed"])
+            st.toast(f"已删除 {p.name}，向量清理 {n} 个文件条目")
+        except Exception as e:  # 文件已删；向量清理失败时提示跑一次更新
+            st.toast(f"文件已删，但向量清理失败：{e}；请稍后点「更新知识库」")
+        global _MANIFEST_KEYS
+        _MANIFEST_KEYS = None  # 失效缓存，刷新列表状态
+        st.rerun()
+
+
 def render():
     st.subheader("📁 知识库")
 
@@ -126,6 +152,9 @@ def render():
                                f"　|　{mtime}")
                     in_db = store_key(p) in _manifest_keys()
                     st.caption("✅ 已入库" if in_db else "⏳ 未入库（待更新知识库）")
+                    if st.button("🗑️ 删除", key=f"del_{store_key(p)}",
+                                 use_container_width=True):
+                        delete_dialog(p)
 
     with st.expander("📄 使用说明"):
         st.markdown(
@@ -133,7 +162,8 @@ def render():
             "或直接放入 `data/knowledge/` 对应子目录\n"
             "1. **入库**：上传后自动切割成片段并向量化入库；放目录的文件点一次"
             "「更新知识库」（增量处理，已有内容秒过不动）\n"
-            "1. **删除文档**：删掉文件后再跑一次「更新知识库」，对应向量自动清理\n"
+            "1. **删除文档**：在下方文档卡片点「🗑️ 删除」，文件与向量片段一并清理；"
+            "若手动删了文件，跑一次「更新知识库」也会自动清理对应向量\n"
             "1. **开始问答**：到「📚 知识问答」页提问，回答会引用来源文件名\n\n"
             "> 问答遵循“仅依据资料回答”：知识库没有的内容会明确说暂无，不编造。")
 
