@@ -16,7 +16,10 @@ def chat(messages: list, model: str | None = None, base_url: str | None = None,
         messages=messages,
         temperature=0.3,
     )
-    return resp.choices[0].message.content
+    if not resp.choices:
+        # 模型服务过载/重启时可能返回畸形响应（如 Ollama 忙于加载模型）
+        raise RuntimeError("模型返回了空响应，请重试；若持续出现请检查模型服务是否繁忙")
+    return resp.choices[0].message.content or ""
 
 
 def get_chat_fn(preset: dict):
