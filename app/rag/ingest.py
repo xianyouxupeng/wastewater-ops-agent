@@ -8,6 +8,20 @@ from app.rag.vectorstore import get_collection, embed_texts
 
 KNOWLEDGE_DIR = Path("data/knowledge")
 MANIFEST = Path("vector_db/manifest.json")  # 记录已入库文件 {路径: md5}
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def store_key(path: Path) -> str:
+    """manifest/向量库 metadata 的规范键：相对项目根目录（界面传绝对路径也不产生重复键）"""
+    try:
+        return str(path.resolve().relative_to(ROOT))
+    except ValueError:  # 不在项目内（如测试临时目录）
+        return str(path)
+
+
+def _key_exists(key: str) -> bool:
+    p = Path(key)
+    return (p if p.is_absolute() else ROOT / p).exists()
 
 
 def file_md5(path: Path) -> str:
@@ -30,11 +44,11 @@ def ingest_knowledge(knowledge_dir: Path = KNOWLEDGE_DIR,
         if path.suffix.lower() not in SUPPORTED_SUFFIXES:
             continue
         digest = file_md5(path)
-        if manifest.get(str(path)) == digest:
+        if manifest.get(store_key(path)) == digest:
             continue  # 未变化，跳过
         changed.append((path, digest))
 
-    removed = [k for k in manifest if not Path(k).exists()]  # 清理已删除文件的向量
+    removed = [k for k in manifest if not _key_exists(k)]  # 清理已删除文件的向量
 
     for key in removed:
         collection.delete(where={"source": key})
@@ -42,21 +56,22 @@ def ingest_knowledge(knowledge_dir: Path = KNOWLEDGE_DIR,
 
     total_chunks = 0
     for path, digest in changed:
-        if str(path) in manifest:  # 内容被修改 → 先删旧向量
-            collection.delete(where={"source": str(path)})
+        key = store_key(path)
+        if key in manifest:  # 内容被修改 → 先删旧向量
+            collection.delete(where={"source": key})
         chunks = split_text(parse_file(path))
         if not chunks:
-            manifest[str(path)] = digest  # 空文档也记账，避免反复重扫
+            manifest[key] = digest  # 空文档也记账，避免反复重扫
             continue
         embeddings = embed_texts(chunks)
-        ids = [f"{path}#{i}" for i in range(len(chunks))]
+        ids = [f"{key}#{i}" for i in range(len(chunks))]
         collection.add(
             ids=ids,
             documents=chunks,
             embeddings=embeddings,
-            metadatas=[{"source": str(path), "chunk": i} for i in range(len(chunks))],
+            metadatas=[{"source": key, "chunk": i} for i in range(len(chunks))],
         )
-        manifest[str(path)] = digest
+        manifest[key] = digest
         total_chunks += len(chunks)
 
     manifest_path.parent.mkdir(exist_ok=True)
