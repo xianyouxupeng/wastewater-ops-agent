@@ -17,3 +17,7 @@ data/atlas/
 # 厂情档案：本厂真实工况数据，不入库（格式示例见 data/plant_profile.example.yaml）
 data/plant_profile.yaml
 data/ledger/
+
+# 本地工作文档（不入库）
+项目实施步骤.md
+V2改进方案.md
