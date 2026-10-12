@@ -1,8 +1,11 @@
-"""🔧 故障诊断页：文字诊断 + 镜检诊断（P9）双 tab"""
+"""🔧 故障诊断页：文字诊断（Agent 多轮循环 / V1 一次性降级）+ 镜检诊断（P9）双 tab"""
 import streamlit as st
 
-from app.diagnostic.engine import diagnose, FALLBACK_WARNING
-from app.providers import get_active_chat_fn
+from app.diagnostic.agent import MODE_LABELS, AgentSession, build_agent_context, detect_mode
+from app.diagnostic.engine import FALLBACK_WARNING, diagnose
+from app.providers import get_active_chat_fn, get_active_message_fn
+
+QUICK_ANSWERS = [("✅ 是", "是"), ("❌ 否", "否"), ("🤔 不确定", "不确定")]
 
 
 def render():
@@ -15,17 +18,36 @@ def render():
 
     tab_text, tab_vision = st.tabs(["📝 文字诊断", "📷 镜检诊断"])
     with tab_text:
-        _render_text(chat_fn)
+        _render_text(chat_fn, provider)
     with tab_vision:
         _render_vision()
 
 
-def _render_text(chat_fn):
+def _render_text(chat_fn, provider):
+    mode = detect_mode(provider.get("model"))
+    from app.memory.plant import is_profile_filled
+    if not is_profile_filled():
+        st.info("👋 首次使用建议先到左侧「🏭 厂情档案」填写本厂工艺、排放限值、"
+                "设计参数等（一次即可）。之后诊断会自动结合本厂工况；不填也能用，按通用工艺推理。")
     symptoms = st.text_area(
         "描述现场现象（可附关键参数，如 DO、SV30、氨氮等）",
-        placeholder="例：出水氨氮超标，DO只有1.8，MLSS偏高", height=100,
+        placeholder="例：出水氨氮有点高", height=100,
         key="diag_symptoms")  # 镜检页"转入排查"会预填此 key
 
+    if mode == "off":
+        st.caption("ℹ️ 当前模型参数量较小，多轮工具调用不稳定，已自动使用 V1 一次性诊断。"
+                   "换用 14B+ 本地模型或在线模型即可启用 Agent 多轮诊断"
+                   "（设置 → 模型；也可在 .env 设 AGENT_MODE 强制指定）。")
+        _render_oneshot(chat_fn, symptoms)
+        return
+
+    st.caption(f"🤖 Agent 多轮诊断：{MODE_LABELS[mode]}——系统会自动查台账/规程/案例，"
+               f"并像老师傅一样追问关键鉴别问题，信息足够才下结论。")
+    _render_agent(mode, symptoms)
+
+
+def _render_oneshot(chat_fn, symptoms):
+    """V1 一次性诊断（off 模式降级路径，逻辑保持不变）"""
     run = st.button("🔍 开始诊断", type="primary", use_container_width=True)
     if not run and st.session_state.pop("diag_autorun", False):
         run = bool(symptoms.strip())  # 镜检页转入：预填后自动执行
@@ -50,6 +72,141 @@ def _render_text(chat_fn):
         else:
             with st.expander("📋 诊断报告（点击展开/收起）", expanded=True):
                 st.markdown(result)
+        _render_case_save()
+
+
+def _render_agent(mode, symptoms):
+    """Agent 多轮诊断 UI：开始 → 工具轮自动续跑 → 问题卡等回答 → 报告"""
+    start = st.button("🔍 开始诊断", type="primary", use_container_width=True)
+    if not start and st.session_state.pop("diag_autorun", False):
+        start = bool(symptoms.strip())  # 镜检页转入：预填后自动执行
+    if start:
+        if not symptoms.strip():
+            st.warning("请先描述现场现象")
+        else:
+            _start_session(symptoms, mode)
+
+    sess = st.session_state.get("agent_session")
+    if sess is None:
+        return
+
+    answer = st.session_state.pop("agent_answer", None)
+    chat_answer = st.session_state.pop("agent_chat_input", None)
+    try:
+        if answer is not None or chat_answer:
+            _drive(sess, answer if answer is not None else chat_answer)
+        elif not st.session_state.get("agent_pending") \
+                and "agent_report" not in st.session_state:
+            _drive(sess, None)  # 新会话首轮 / 工具轮续跑
+    except Exception as e:
+        st.error(f"诊断中断：{e}")
+        st.caption("请到「设置 → 模型 → 诊断」测试供应商连通性；"
+                   "若提示不支持 tools，可在 .env 设 AGENT_MODE=text 改用文本解析模式。")
+        _reset_agent()
+        return
+
+    _render_trace()
+    _render_pending_or_report()
+
+
+def _set_answer(value):
+    st.session_state["agent_answer"] = value
+
+
+def _start_session(symptoms, mode):
+    llm_fn, _ = get_active_message_fn()
+    st.session_state["agent_session"] = AgentSession(
+        symptoms, llm_fn, mode, context=build_agent_context(symptoms))
+    st.session_state["agent_trace"] = []
+    for key in ("agent_pending", "agent_pending_thought",
+                "agent_report", "diag_result"):
+        st.session_state.pop(key, None)
+
+
+def _drive(sess, answer):
+    """推到下一个需要人/结束的节点：工具轮自动续跑并记录轨迹"""
+    ev = sess.step(answer)
+    trace = st.session_state.setdefault("agent_trace", [])
+    while ev["type"] == "tool":
+        trace.append(ev)
+        ev = sess.step()
+    if ev["type"] == "ask":
+        st.session_state["agent_pending"] = ev["question"]
+        st.session_state["agent_pending_thought"] = ev.get("thought", "")
+    elif ev["type"] == "conclude":
+        st.session_state.pop("agent_pending", None)
+        st.session_state["agent_report"] = ev["report"]
+        st.session_state["diag_result"] = ev["report"]  # 复用案例沉淀入口
+
+
+def _render_trace():
+    trace = st.session_state.get("agent_trace") or []
+    if trace:
+        with st.expander(f"🧰 Agent 已自动查证 {len(trace)} 次（点击展开）"):
+            for t in trace:
+                if t.get("thought"):
+                    st.caption(f"💡 {t['thought']}")
+                st.markdown(f"**{t['name']}**　`{t.get('args') or {}}`")
+                st.text(t["result"])
+
+
+def _render_pending_or_report():
+    question = st.session_state.get("agent_pending")
+    if question:
+        with st.chat_message("assistant"):
+            st.markdown(f"**需要你确认一个关键鉴别问题：**\n\n{question}")
+            cols = st.columns(len(QUICK_ANSWERS))
+            for col, (label, value) in zip(cols, QUICK_ANSWERS):
+                # 回调只置状态，统一由下一轮 _render_agent 驱动循环，避免重复调 LLM
+                col.button(label, key=f"agent_quick_{value}",
+                           on_click=_set_answer, args=(value,))
+        st.chat_input("或在此输入回答…", key="agent_chat_input")
+        return
+    report = st.session_state.get("agent_report")
+    if report:
+        with st.expander("📋 诊断报告（点击展开/收起）", expanded=True):
+            st.markdown(report)
+        if st.button("🔄 重新开始一轮诊断", use_container_width=True):
+            _reset_agent()
+            st.rerun()
+        _render_case_save()
+
+
+def _reset_agent():
+    for key in ("agent_session", "agent_trace", "agent_pending",
+                "agent_pending_thought", "agent_report", "diag_result"):
+        st.session_state.pop(key, None)
+
+
+def _render_case_save():
+    """L4 经验记忆：本次诊断的"现象→结论→处置"经人工确认后沉淀为案例。
+
+    人工确认闭环防脏数据：LLM 结论只能预填草稿，点头才写库；写入只落 jsonl，
+    向量入库延后到下次「更新知识库」（embedding 服务不在时不阻塞）。
+    """
+    symptoms = st.session_state.get("diag_symptoms", "")
+    with st.expander("💾 沉淀为案例（处置见效后填写，本厂下次诊断自动引用）"):
+        st.caption("请确认处置已验证有效后再入库；内容会作为本厂真实案例被相似诊断检索。")
+        with st.form("case_save_form"):
+            phen = st.text_area("现象（含关键参数）", value=symptoms, height=80,
+                                key="case_phen")
+            cause = st.text_area("结论/原因", placeholder="例：进水负荷冲击导致硝化不足",
+                                 key="case_cause")
+            action = st.text_area("处置", placeholder="例：减泥+提DO至3.0，48h恢复",
+                                  key="case_action")
+            outcome = st.text_input("结果", placeholder="例：出水达标",
+                                    key="case_outcome")
+            saved = st.form_submit_button("✅ 确认无误，写入案例库",
+                                          use_container_width=True)
+        if saved:
+            if not (phen.strip() and cause.strip()):
+                st.warning("现象与结论/原因必填")
+            else:
+                from app.rag.cases import add_case
+                case = add_case({"现象": phen.strip(), "原因": cause.strip(),
+                                 "处置": action.strip(), "结果": outcome.strip()})
+                st.success(f"已写入案例库（{case['id']}），"
+                           f"下次「更新知识库」时自动向量化生效")
 
 
 def _render_vision():

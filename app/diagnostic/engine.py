@@ -1,10 +1,17 @@
-"""故障诊断引擎：故障树匹配 → 命中拼树生成报告 / 未命中走兜底路径"""
+"""故障诊断引擎：故障树匹配 → 命中拼树生成报告 / 未命中走兜底路径。
+
+V2.1 起注入三层记忆：厂情档案（L2）+ 最近台账（L3）+ 会话历史（L1），
+相似案例（L4）沿用原有检索。记忆加载失败一律静默降级，不阻塞诊断。
+"""
 from pathlib import Path
 
 import yaml
 
 from app.agent.llm import chat
 from app.agent.prompts import DIAGNOSIS_SYSTEM, FALLBACK_SYSTEM
+from app.memory.plant import plant_profile_block
+from app.memory.runtime import runtime_block
+from app.memory.session import history_text
 
 RULES_PATH = Path(__file__).resolve().parents[2] / "data" / "rules" / "fault_tree.yaml"
 
@@ -30,9 +37,11 @@ def match_trees(user_input: str, trees: list[dict]) -> list[dict]:
 
 
 def build_messages(user_input: str, matched: list[dict],
-                   cases: list[dict] | None = None) -> list[dict]:
+                   cases: list[dict] | None = None,
+                   plant_block: str = "", runtime: str = "",
+                   history: list[dict] | None = None) -> list[dict]:
     """按命中与否组装 prompt：命中拼树，未命中走兜底 prompt + 知识库检索增强；
-    两种路径都拼入相似历史案例（若有）"""
+    两种路径都拼入三层记忆（厂情/台账/会话，纯文本块参数，测试可注入）与相似历史案例"""
     case_block = _case_block(cases)
     if matched:
         tree_text = yaml.dump(matched, allow_unicode=True, sort_keys=False)
@@ -44,8 +53,9 @@ def build_messages(user_input: str, matched: list[dict],
         context = _kb_context(user_input)
         content = user_input if not context else f"{user_input}\n\n{context}"
         system = FALLBACK_SYSTEM
-    if case_block:
-        content = f"{content}\n\n{case_block}"
+    for block in (plant_block, runtime, history_text(history), case_block):
+        if block:
+            content = f"{content}\n\n{block}"
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": content},
@@ -83,11 +93,25 @@ def _similar_cases(user_input: str, k: int = 3) -> list[dict]:
         return []
 
 
-def diagnose(user_input: str, *, chat_fn=chat) -> str:
-    """诊断主入口。chat_fn 可注入替换（测试不依赖LLM、界面可按需切换模型）"""
+def _safe(fn, *args, **kwargs) -> str:
+    """记忆块加载兜底：任何异常（文件损坏等）返回空串，缺记忆不断诊断"""
+    try:
+        return fn(*args, **kwargs) or ""
+    except Exception:
+        return ""
+
+
+def diagnose(user_input: str, *, chat_fn=chat,
+             history: list[dict] | None = None) -> str:
+    """诊断主入口。chat_fn 可注入替换（测试不依赖LLM、界面可按需切换模型）；
+    history 为会话历史（多轮诊断衔接用，V2.3 agent 循环接入）"""
     matched = match_trees(user_input, load_fault_trees())
     cases = _similar_cases(user_input)
-    answer = chat_fn(build_messages(user_input, matched, cases))
+    plant = _safe(plant_profile_block)
+    runtime = _safe(runtime_block)
+    answer = chat_fn(build_messages(user_input, matched, cases,
+                                    plant_block=plant, runtime=runtime,
+                                    history=history))
     output = answer
     if not matched:
         output = f"{FALLBACK_WARNING}\n\n{output}"

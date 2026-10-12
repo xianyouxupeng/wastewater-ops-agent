@@ -1,7 +1,8 @@
-"""📋 台账生成页：表单录入当日数据 → 导出 Word"""
+"""📋 台账生成页：表单录入当日数据 → 导出 Word + 存入运行记忆（V2.1）"""
 import streamlit as st
 
 from app.ledger.report_generator import generate_report
+from app.memory.runtime import append_entry
 
 
 def render():
@@ -45,6 +46,16 @@ def render():
         data["date"] = ledger_date.isoformat()
         data["shift"] = ledger_shift
         docx_bytes = generate_report(data)
+        # V2.1 运行记忆：台账落盘后诊断/问答才能自动引用近况
+        save_memory = st.checkbox("💾 同时存入运行记忆（诊断/问答时自动参考近况）",
+                                  value=True)
+        if save_memory:
+            try:
+                append_entry(data)
+                st.success(f"已存入运行记忆（{ledger_date} {ledger_shift}），"
+                           f"诊断时将自动引用")
+            except Exception as e:
+                st.warning(f"存入运行记忆失败（不影响台账导出）：{e}")
         st.download_button("⬇️ 下载 Word 台账", docx_bytes,
                            file_name=f"运行台账_{ledger_date}.docx",
                            mime="application/vnd.openxmlformats-officedocument"

@@ -1,6 +1,7 @@
-"""历史案例库：jsonl 案例向量化入库（独立 collection）+ 相似案例检索"""
+"""历史案例库：jsonl 案例向量化入库（独立 collection）+ 相似案例检索 + 沉淀写入"""
 import hashlib
 import json
+from datetime import date
 from pathlib import Path
 
 from app.rag.vectorstore import get_client, embed_texts
@@ -72,6 +73,27 @@ def ingest_cases(cases_file: Path = CASES_FILE) -> dict:
     MANIFEST.write_text(json.dumps(manifest, ensure_ascii=False, indent=1),
                         encoding="utf-8")
     return {"changed": [c.get("id") for c in changed], "removed": removed}
+
+
+def add_case(case: dict, path: Path = CASES_FILE) -> dict:
+    """追加一条案例（L4 经验记忆：诊断结论经人工确认后沉淀）。
+
+    缺省字段自动补全：id 沿用 C00X 自动编号、日期默认今天、来源标记"诊断沉淀"。
+    只写 jsonl 不向量化——入库后由 更新知识库/下次 ingest_cases 增量嵌入，
+    写入失败不影响诊断主流程（调用方负责提示）。
+    """
+    cases = load_cases(path)
+    if not case.get("id"):
+        nums = [int(c["id"][1:]) for c in cases
+                if str(c.get("id", "")).startswith("C")
+                and c["id"][1:].isdigit()]
+        case["id"] = f"C{max(nums, default=0) + 1:03d}"
+    case.setdefault("日期", date.today().isoformat())
+    case.setdefault("来源", "诊断沉淀")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(case, ensure_ascii=False) + "\n")
+    return case
 
 
 def format_case(case: dict) -> str:

@@ -124,6 +124,17 @@ def get_active_chat_fn():
                         "model": provider["model"]}), provider
 
 
+def get_active_message_fn():
+    """同 get_active_chat_fn，但返回支持工具调用的消息级函数（Agent 循环用）"""
+    provider = get_active_provider()
+    if provider is None or not provider.get("model"):
+        return None, provider
+    from app.agent.llm import get_message_fn
+    return get_message_fn({"base_url": provider["base_url"],
+                           "api_key": provider.get("api_key") or "ollama",
+                           "model": provider["model"]}), provider
+
+
 def ping(provider: dict, question: str = "请只回复：OK") -> tuple[bool, float, str]:
     """连通性测试：返回 (是否成功, 耗时秒, 回答或错误摘要)"""
     from openai import OpenAI

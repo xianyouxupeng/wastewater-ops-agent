@@ -25,6 +25,10 @@ def render():
         return
     st.caption(f"当前使用：{provider['name']} · {provider['model']}"
                f"（会话历史仅保留在本页面，刷新/重启后清空）")
+    from app.memory.plant import is_profile_filled
+    if not is_profile_filled():
+        st.info("👋 首次使用建议先到左侧「🏭 厂情档案」填写本厂信息（一次即可），"
+                "回答会自动结合本厂工况；不填也能用。")
 
     if "qa_history" not in st.session_state:
         st.session_state["qa_history"] = []
@@ -41,7 +45,10 @@ def render():
         st.chat_message("user").write(question)
         try:
             with st.spinner("检索知识库并生成回答..."):
-                answer, hits = ask(question, chat_fn=chat_fn, return_sources=True)
+                # 历史去掉刚追加的当前问题（已随 prompt 注入，避免重复）
+                prior = st.session_state["qa_history"][:-1]
+                answer, hits = ask(question, chat_fn=chat_fn,
+                                   return_sources=True, history=prior)
                 sources = [h["source"] for h in hits]
         except Exception as e:
             answer = f"⚠️ 问答失败：{e}"

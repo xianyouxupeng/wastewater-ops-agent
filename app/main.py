@@ -14,7 +14,7 @@ st.set_page_config(page_title="污水处理运维助手", page_icon="💧", layo
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from app.pages import diagnose, qa, knowledge, ledger, params, settings  # noqa: E402
+from app.pages import diagnose, profile, qa, knowledge, ledger, params, settings  # noqa: E402
 from app.rag.ingest import ingest_knowledge  # noqa: E402
 from app.rag.cases import ingest_cases  # noqa: E402
 
@@ -63,6 +63,7 @@ def kb_dialog():
 
 
 nav = st.navigation([
+    st.Page(profile.render, title="厂情档案", icon="🏭", url_path="profile"),
     st.Page(diagnose.render, title="故障诊断", icon="🔧", url_path="diagnose", default=True),
     st.Page(qa.render, title="知识问答", icon="📚", url_path="qa"),
     st.Page(knowledge.render, title="知识库", icon="📁", url_path="knowledge"),
@@ -73,6 +74,11 @@ nav = st.navigation([
 
 with st.sidebar:
     st.markdown("### 💧 污水处理运维助手")
+    from app.memory.plant import is_profile_filled
+    if is_profile_filled():
+        st.caption("✅ 厂情档案已配置")
+    else:
+        st.caption("👋 首次使用请先到「🏭 厂情档案」填写本厂情况")
 
 nav.run()
 

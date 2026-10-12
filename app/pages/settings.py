@@ -34,6 +34,13 @@ def _render_llm():
     store = providers.load_store(STORE_PATH)
     active = store.get("active", "")
 
+    active_p = providers.get_active_provider(STORE_PATH)
+    if active_p and active_p.get("model"):
+        from app.diagnostic.agent import MODE_LABELS, detect_mode
+        mode = detect_mode(active_p["model"])
+        st.caption(f"Agent 诊断能力（{active_p['model']}）：{MODE_LABELS[mode]}"
+                   f"　—— 可在 .env 设 AGENT_MODE=native/text/off 强制覆盖自动判定")
+
     head_l, head_r = st.columns([3, 1])
     head_l.markdown("**供应商**")
     if head_r.button("➕ 添加供应商", use_container_width=True):
