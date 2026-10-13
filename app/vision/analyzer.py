@@ -25,15 +25,28 @@ MAX_SIDE = 1024  # 手机原图太大，统一压到最长边 1024 再传 VLM
 
 ANALYZE_PROMPT = """你是活性污泥镜检助手。仔细观察这张显微镜照片，仅输出一个JSON对象，不要输出任何其他文字：
 {
-  "image_quality": "足以判断 / 模糊 / 有眩光 / 有气泡干扰 之一",
+  "image_quality": "足以判断 / 模糊 之一",
   "observation": "形态描述（菌胶团、丝状菌、原生/后生动物）",
-  "filament_abundance": "+ / ++ / +++ / ++++ 之一（按镜检教程丰度分级）",
+  "filament_abundance": "+ / ++ / +++ / ++++ 之一",
   "dominant_organisms": ["类群1", "类群2"],
   "floc_structure": "菌胶团状态描述"
 }
+判定规则（重要）：
+- 只要画面能看出污泥絮体/颗粒结构，image_quality 一律填"足以判断"；轻微眩光、气泡、杂质请在
+  observation 里说明即可，不要因此判定为不合格；
+- 只有整张图糊到无法辨认任何结构时，image_quality 才填"模糊"；
+- 看不清丝状菌数量时，filament_abundance 按最低级填"+"，不要留空；
+- 视野内没有原生/后生动物时，dominant_organisms 填 ["未见"]，不要留空；
+- 五个字段都必须有值，禁止输出 null。
 红线：
 - 生物只写到类群级（钟虫类/轮虫类/丝状菌/游离细菌等），禁止编造具体物种名；
-- 图像质量不足以判断时，image_quality 如实填写，其余四个字段一律填 null，不得猜测。"""
+- 只有在图像确实无法辨认时才填"模糊"，此时其余四个字段填 null。
+
+示例输出：
+{"image_quality": "足以判断", "observation": "菌胶团较大且紧实，边界清晰，可见少量丝状菌伸出，视野内有零星游离细菌，右上角有轻微眩光", "filament_abundance": "+", "dominant_organisms": ["游离细菌"], "floc_structure": "菌胶团紧实，边界清晰"}"""
+
+# JSON 解析失败时追加的修复指令（重试一次）
+REPAIR_SUFFIX = "\n\n注意：上一次输出无法解析。请只输出一个合法的 JSON 对象，不要任何解释文字、不要 Markdown 代码围栏。"
 
 MICROSCOPY_SYSTEM = """你是污水处理厂的资深工艺工程师助手，基于镜检观察结果做生物相分析。
 输入包含：VLM 对镜检图像的结构化描述，以及检索到的镜检教程参考资料。
@@ -144,17 +157,25 @@ def parse_vlm_json(text: str) -> dict | None:
     return None
 
 
+# 判定"无法辨认"的否定标记。必须先判否定再判肯定：
+# "不足以判断" 里含 "足以"，旧的 `"足以" in quality` 写法会把"判不了"误判成"判得了"
+UNREADABLE_MARKERS = ("模糊", "不足以", "无法", "不能", "难以",
+                      "看不清", "不清楚", "全黑", "空白", "无图像")
+# 质量门必须非空的字段；dominant_organisms 不在其中——视野里没有原生动物是正常情况，
+# 空列表不该被当成"图看不清"
+REQUIRED_FIELDS = ("observation", "filament_abundance", "floc_structure")
+
+
 def is_quality_ok(result: dict | None) -> bool:
-    """质量门：image_quality 含'足以' 且 其余四字段全部非空才放行（防硬编）"""
+    """质量门：模型明确说"看不清"时拦下；否则三个核心字段齐全即放行（防硬编）"""
     if not isinstance(result, dict):
         return False
-    if "足以" not in str(result.get("image_quality") or ""):
+    quality = str(result.get("image_quality") or "").strip()
+    if not quality:
         return False
-    for key in ("observation", "filament_abundance",
-                "dominant_organisms", "floc_structure"):
-        if not result.get(key):
-            return False
-    return True
+    if any(marker in quality for marker in UNREADABLE_MARKERS):
+        return False
+    return all(result.get(key) for key in REQUIRED_FIELDS)
 
 
 def _prefer_microscopy(hits: list[dict], limit: int = 5) -> list[dict]:
@@ -167,13 +188,28 @@ def _prefer_microscopy(hits: list[dict], limit: int = 5) -> list[dict]:
 # ===================== 主流程 =====================
 
 def analyze_image(img_bytes: bytes, cfg: dict, vlm_fn=None) -> dict:
-    """VLM 看图 → {'result': dict|None, 'raw': str}；解析失败 result=None（走质量不足提示）"""
+    """VLM 看图 → {'result': dict|None, 'raw': str}。
+
+    首次输出不是合法 JSON 时，追加修复指令重试一次——小参数量 VLM 偶尔会把
+    JSON 包在解释文字里，重试比直接判"图像质量不足"更划算。
+    """
     if vlm_fn is None:
         vlm_fn = build_vlm_fn(cfg)
     small = downscale_image(img_bytes)
-    messages = build_image_message(ANALYZE_PROMPT, to_data_url(small))
-    raw = vlm_fn(messages)
-    return {"result": parse_vlm_json(raw), "raw": raw or ""}
+    data_url = to_data_url(small)
+    raw = vlm_fn(build_image_message(ANALYZE_PROMPT, data_url))
+    result = parse_vlm_json(raw)
+    if result is None:
+        try:
+            retry_raw = vlm_fn(build_image_message(ANALYZE_PROMPT + REPAIR_SUFFIX,
+                                                   data_url))
+        except Exception:
+            retry_raw = ""
+        result = parse_vlm_json(retry_raw)
+        if result is not None:
+            return {"result": result, "raw": retry_raw or ""}
+        raw = f"{raw or ''}\n--- 重试后仍无法解析 ---\n{retry_raw or ''}"
+    return {"result": result, "raw": raw or ""}
 
 
 def explain(obs_desc: str, hits: list[dict], chat_fn) -> str:

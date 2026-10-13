@@ -95,6 +95,62 @@ def test_is_quality_gate_blocks_none():
     assert analyzer.is_quality_ok(None) is False
 
 
+def test_is_quality_ok_allows_empty_organisms():
+    """视野里没有原生/后生动物是正常情况，空列表不该被当成"图看不清"（原实现会误拦）"""
+    assert analyzer.is_quality_ok(dict(GOOD_RESULT, dominant_organisms=[])) is True
+    assert analyzer.is_quality_ok(dict(GOOD_RESULT, dominant_organisms=["未见"])) is True
+
+
+def test_is_quality_gate_blocks_negated_phrase():
+    """"不足以判断"含"足以"，旧的子串判断会把"判不了"误判成"判得了"（逻辑反转）"""
+    assert analyzer.is_quality_ok(dict(GOOD_RESULT, image_quality="不足以判断")) is False
+    assert analyzer.is_quality_ok(dict(GOOD_RESULT, image_quality="图像模糊，难以判断")) is False
+    assert analyzer.is_quality_ok(dict(GOOD_RESULT, image_quality="无法辨认任何结构")) is False
+
+
+def test_is_quality_gate_accepts_clean_phrasing():
+    """只要模型没说看不清、且核心字段齐全就放行——不因措辞不同而误拦"""
+    for quality in ("足以判断", "清晰可辨", "可以判断", "图像清晰，结构可辨"):
+        assert analyzer.is_quality_ok(dict(GOOD_RESULT, image_quality=quality)) is True
+
+
+def test_analyze_image_retries_once_on_unparsable():
+    """首次返回无法解析时，追加修复指令重试一次；重试成功则采用重试结果"""
+    calls = []
+
+    def fake_vlm(messages):
+        calls.append(messages)
+        if len(calls) == 1:
+            return "这张图我看了看，不太好说。"      # 无法解析
+        return str(GOOD_RESULT).replace("'", '"')   # 重试成功
+
+    ana = analyzer.analyze_image(_jpeg(400, 300), analyzer.DEFAULT_VLM,
+                                 vlm_fn=fake_vlm)
+    assert len(calls) == 2
+    assert ana["result"]["filament_abundance"] == "++"
+    assert "只输出一个合法的 JSON" in calls[1][0]["content"][0]["text"]
+
+
+def test_analyze_image_no_retry_when_parse_ok():
+    calls = []
+
+    def fake_vlm(messages):
+        calls.append(messages)
+        return str(GOOD_RESULT).replace("'", '"')
+
+    analyzer.analyze_image(_jpeg(400, 300), analyzer.DEFAULT_VLM, vlm_fn=fake_vlm)
+    assert len(calls) == 1
+
+
+def test_prompt_forbids_null_and_defaults_to_usable():
+    """提示词必须引导模型默认填"足以判断"、禁止输出 null（这是 0/3→3/3 的修复点）"""
+    p = analyzer.ANALYZE_PROMPT
+    assert "禁止输出 null" in p
+    assert "一律填" in p and "足以判断" in p
+    # 旧的"四个字段一律填 null"这条引导必须已经删掉
+    assert "其余四个字段一律填 null" not in p
+
+
 # ---------- analyze_image（注入 fake VLM） ----------
 
 def test_analyze_image_with_fake_vlm():
